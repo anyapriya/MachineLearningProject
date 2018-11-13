@@ -1,0 +1,23 @@
+Professor Office Hours: Tuesdays 4:30pm-5:30pm
+TA Office Hours: Thursdays 9am-10am, 4pm-5pm
+
+
+By end of week 7:
+- Figure out lambda
+- Finalize Lasso
+- Check with TA's / professor
+
+By end of week 8:
+- Elastic net
+- Check with TA's / professor
+
+By middle of week 9:
+- Simulation
+
+By start of week 10:
+- Write-up / Comment code
+
+Weekend:
+- Edit and finalize
+
+Due Week 11 - Wednesday Dec 12th, 4pm
