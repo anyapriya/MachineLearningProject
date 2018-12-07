@@ -1,6 +1,6 @@
 library(matrixcalc)
 library(MASS)
-
+library(ggplot2)
 
 
 
@@ -58,14 +58,14 @@ Testing <- function(n, sizes, p, rho, errorSD, betaVals){
 #Called by Testing, finds the value of lambda to minimize the MSE and returns the BetaHats and MSE
 Validation <- function(x,y,sizes){
   testSize <- sizes[1]
+  
   MinMSE.Lasso <- optim(c(0.0001), MSEValid.Lasso,  x = x, y = y, sizes = sizes, method = "Brent", lower = 0, upper = 5)
-  BetaHat.Lasso <- coordDescAlg.Lasso(MinMSE.Lasso$minimum, y[1:testSize], x[1:testSize,])
+  BetaHat.Lasso <- coordDescAlg.Lasso(MinMSE.Lasso$par, y[1:testSize], x[1:testSize,])
   
   MinMSE.ElasticNet <- optim(c(0.0001, 0.0001), MSEValid.ElasticNet,  x = x, y = y, sizes = sizes)
-  BetaHat.ElasticNet <- coordDescAlg.ElasticNet(MinMSE.ElasticNet$par, y[1:testSize], x[1:testSize,])
+  BetaHat.ElasticNet <- coordDescAlg.ElNet(MinMSE.ElasticNet$par, y[1:testSize], x[1:testSize,])
   
-  MSE <- MinMSE$objective
-  return(list(BetaHat.Lasso,MinMSE.Lasso$objective, BetaHat.ElasticNet, MinMSE.ElasticNet$value))
+  return(list(BetaHat.Lasso,MinMSE.Lasso$value, BetaHat.ElasticNet, MinMSE.ElasticNet$value))
 }
 
 
@@ -92,7 +92,7 @@ MSEValid.ElasticNet <- function(lambda, x, y, sizes){
   xtrain = x[1:testSize,]
   yvalid = y[(testSize+1):(testSize + validSize)]
   xvalid = x[(testSize+1):(testSize + validSize),]
-  BetaHat <- coordDescAlg.ElasticNet(lambda, ytrain, xtrain)
+  BetaHat <- coordDescAlg.ElNet(lambda, ytrain, xtrain)
   MSE <- mean((yvalid - xvalid %*% BetaHat)^2)
   return(MSE)
 }
@@ -115,21 +115,21 @@ coordDescAlg.Lasso <- function(lambda, y, x){
   while(!converge){
     for(j in 1:p){
       r[,j] <- y - x[,-j]%*%BetaHat[-j]
-    
-      BetaHat.star[j] <- (1/n)*(t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j])
-      newBetaHat[j] <- sign(BetaHat.star[j])*pmax(BetaHat.star[j] - (lambda / (t(x[,j])%*% x[,j])), 0)
-    
-      if(all(round(BetaHat, 3) == round(newBetaHat,3))){
+      
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j])
+      newBetaHat[j] <- sign(BetaHat.star[j])*pmax(BetaHat.star[j] - n*(lambda / (t(x[,j])%*% x[,j])), 0)
+      
+      if(all(round(BetaHat, 5) == round(newBetaHat,5))){
         converge <- TRUE
         break
       } else {
         BetaHat <- newBetaHat
       }
-
+      
       
     }
     
-
+    
   }
   
   return(BetaHat)
@@ -158,11 +158,7 @@ coordDescAlg.Lasso <- function(lambda, y, x){
 
 
 
-
-
-
-
-coordDescAlg.ElasticNet <- function(lambda, y, x){
+coordDescAlg.ElNet <- function(lambda, y, x){
   
   x <- as.matrix(x)
   converge <- FALSE
@@ -177,7 +173,7 @@ coordDescAlg.ElasticNet <- function(lambda, y, x){
     for(j in 1:p){
       r[,j] <- y - x[,-j]%*%BetaHat[-j]
       
-      BetaHat.star[j] <- (1/n)*(t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j])
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j])
       newBetaHat[j] <- (sign(BetaHat.star[j])*pmax(BetaHat.star[j] - (lambda[1] / (t(x[,j])%*% x[,j])), 0)) / ((1 + 2*lambda[2] ))
       
       
@@ -197,8 +193,145 @@ coordDescAlg.ElasticNet <- function(lambda, y, x){
 
 
 
-set.seed(3)
 
-Simulation(times = 3, obs = 240, test.valid.size = c(20,20), p = 8, rho = 0.5, errorSD = 3, betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1))
+
+
+
+
+
+#Baseline
+output <- Simulation(times = 50, obs = 240, test.valid.size = c(20,20), p = 8, rho = 0.5, errorSD = 3, betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1))
+
+
+mysummary <- cbind(colMeans(output),apply(output, 2, var))
+rownames(mysummary) <- c("NonZeroCoefs.Lasso", "MSE.Lasso", "NonZeroCoefs.ElNet", "MSE.ElNet")
+colnames(mysummary) <- c("Mean", "Var")
+mysummary
+
+
+
+
+meanAndvar <- function(x){
+  cbind(colMeans(x),apply(x, 2, var))
+}
+
+#Change number of simulations
+NSims <- c(3:10)
+
+output <- lapply(NSims, Simulation, obs = 240, test.valid.size = c(20,20), p = 8, rho = 0.5, errorSD = 3, betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1))
+mysummary <- lapply(output, meanAndvar)
+
+NonZeroCoefsSummary.Lasso <- data.frame("NSims" = NSims, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 1,1), "Var" = sapply(mysummary, "[[", 1,2))
+NonZeroCoefsSummary.ElNet <- data.frame("NSims" = NSims, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 3,1), "Var" = sapply(mysummary, "[[", 3,2))
+NonZeroCoefsSummary <- rbind(NonZeroCoefsSummary.Lasso, NonZeroCoefsSummary.ElNet)
+
+MSEsummary.Lasso <- data.frame("NSims" = NSims, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 2,1), "Var" = sapply(mysummary, "[[", 2,2))
+MSEsummary.ElNet <- data.frame("NSims" = NSims, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 4,1), "Var" = sapply(mysummary, "[[", 4,2))
+MSEsummary <- rbind(MSEsummary.Lasso, MSEsummary.ElNet)
+
+ggplot(NonZeroCoefsSummary) + ggtitle("Non-Zero Coefficients by Number of Simulations") + 
+  geom_line(aes(x = NSims, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= NSims, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+ggplot(MSEsummary) + ggtitle("MSE by Number of Simulations") + 
+  geom_line(aes(x = NSims, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= NSims, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+
+
+#Change observation number
+Nobs <- c(50:2000)
+
+output <- lapply(Nobs, Simulation, times = 50, test.valid.size = c(20,20), p = 8, rho = 0.5, errorSD = 3, betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1))
+mysummary <- lapply(output, meanAndvar)
+
+NonZeroCoefsSummary.Lasso <- data.frame("Nobs" = Nobs, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 1,1), "Var" = sapply(mysummary, "[[", 1,2))
+NonZeroCoefsSummary.ElNet <- data.frame("Nobs" = Nobs, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 3,1), "Var" = sapply(mysummary, "[[", 3,2))
+NonZeroCoefsSummary <- rbind(NonZeroCoefsSummary.Lasso, NonZeroCoefsSummary.ElNet)
+
+MSEsummary.Lasso <- data.frame("Nobs" = Nobs, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 2,1), "Var" = sapply(mysummary, "[[", 2,2))
+MSEsummary.ElNet <- data.frame("Nobs" = Nobs, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 4,1), "Var" = sapply(mysummary, "[[", 4,2))
+MSEsummary <- rbind(MSEsummary.Lasso, MSEsummary.ElNet)
+
+ggplot(NonZeroCoefsSummary) + ggtitle("Non-Zero Coefficients by Number of Observations") + 
+  geom_line(aes(x = Nobs, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= Nobs, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+ggplot(MSEsummary) + ggtitle("MSE by Number of Observations") + 
+  geom_line(aes(x = Nobs, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= Nobs, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+
+#Change train number
+
+
+#Change validation number
+
+
+#Change p
+
+
+#Change sparsity levels of beta
+
+
+#Change sigma
+
+SigVals <- c(-2:2)
+
+output <- lapply(SigVals, Simulation, times = 50, obs = 240, test.valid.size = c(20,20), p = 8, rho = 0.5, betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1))
+mysummary <- lapply(output, meanAndvar)
+
+NonZeroCoefsSummary.Lasso <- data.frame("SigVals" = SigVals, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 1,1), "Var" = sapply(mysummary, "[[", 1,2))
+NonZeroCoefsSummary.ElNet <- data.frame("SigVals" = SigVals, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 3,1), "Var" = sapply(mysummary, "[[", 3,2))
+NonZeroCoefsSummary <- rbind(NonZeroCoefsSummary.Lasso, NonZeroCoefsSummary.ElNet)
+
+MSEsummary.Lasso <- data.frame("SigVals" = SigVals, Mod = "Lasso", "Mean" = sapply(mysummary, "[[", 2,1), "Var" = sapply(mysummary, "[[", 2,2))
+MSEsummary.ElNet <- data.frame("SigVals" = SigVals, Mod = "ElNet", "Mean" = sapply(mysummary, "[[", 4,1), "Var" = sapply(mysummary, "[[", 4,2))
+MSEsummary <- rbind(MSEsummary.Lasso, MSEsummary.ElNet)
+
+ggplot(NonZeroCoefsSummary) + ggtitle("Non-Zero Coefficients by Standard Deviation of Error") + 
+  geom_line(aes(x = SigVals, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= SigVals, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+ggplot(MSEsummary) + ggtitle("MSE by Standard Deviation of Error") + 
+  geom_line(aes(x = SigVals, y = Mean, color = Mod)) + 
+  geom_ribbon(aes(x= SigVals, ymin = Mean - sqrt(Var), ymax = Mean + sqrt(Var), fill = Mod), alpha = 0.3)
+
+
+
+
+
+
+
+
+n = 240; size = c(20,20); p = 8; rho = 0.5; errorSD = 3; betaVals = matrix(c(3,1.5,0,0,2,0,0,0), ncol = 1)
+
+MSEValidResult <- sapply(seq(0, 1, by = 0.01), MSEValid.Lasso, x = x, y = y, sizes = sizes)
+
+testerfunction.1 <- function(merp){
+  myglmnet <- glmnet(x[1:20,], y[1:20], alpha = 1, lambda = merp)
+  #intlasso <- lasso(x, y, merp)
+  mylasso <- coordDescAlg.Lasso(merp, y, x)
+  MSEglmnet <- mean((y[21:40] - x[21:40,] %*% myglmnet$beta)^2)
+  #MSEIntLasso <- mean((y[21:40] - x[21:40,] %*% intlasso)^2)
+  MSEmyLasso <- mean((y[21:40] - x[21:40,] %*% mylasso)^2)
+  return(c(merp, MSEglmnet, MSEmyLasso))
+}
+
+
+
+testerfunction.2 <- function(merp){
+  myglmnet <- glmnet(x[1:20,], y[1:20], alpha = .5, lambda = merp)
+  myElNet <- coordDescAlg.ElNet(c(merp,0.5), y, x)
+  MSEglmnet <- mean((y[21:40] - x[21:40,] %*% myglmnet$beta)^2)
+  #MSEIntLasso <- mean((y[21:40] - x[21:40,] %*% intlasso)^2)
+  MSEmyElNet <- mean((y[21:40] - x[21:40,] %*% myElNet)^2)
+  return(c(merp, MSEglmnet, MSEmyElNet))
+}
+
+
+t(sapply(seq(0, 5, by = 0.05), testerfunction.2))
+cbind(seq(0, 3, by = 0.01), MSEValidResult,  sapply(seq(0, 1, by = 0.01), testerfunction))
+
 
 
