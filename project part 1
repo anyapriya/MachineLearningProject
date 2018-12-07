@@ -1,0 +1,1481 @@
+############################################################################
+#                                                                          #
+#            ST443 Machine Learning and Data Mining Group Project          #
+#                                                                          #
+############################################################################
+
+# The object of this project is to to use the data from the 14104 records to 
+# build a statistical model to predict the CO2 emission
+# 
+# 
+#
+library(ggplot2)
+library(ggpubr)
+library(PerformanceAnalytics)
+library(pls)
+library(glmnet)
+library(MASS)
+library(randomForest)
+library(rpart)       # performing regression trees
+library(rpart.plot)  # plotting regression trees
+library(ipred)       # bagging
+library(caret)       # bagging
+library(dplyr)
+library(e1071)
+library(gbm)
+library(class)
+########################################################
+#        
+#             STEP 1.  Read and Clean Data
+#
+######################################################
+CO2Data<-read.csv("CO2Data.csv")
+View(CO2Data)
+str(CO2Data)
+names(CO2Data)
+dim(CO2Data)
+sum(is.na(CO2Data))
+# In this dataset,we have 14104 observations and 19 variables
+summary(CO2Data$MemberState)
+length(levels(CO2Data$MemberState))
+# 28 levels in this variable, each levels represent the EU member state.
+# for example, DE is Germany. 
+
+summary(CO2Data$MfrGroup) 
+# problems: unbalance of goup, repeat group name,so need to combine the 
+#levels in variable 
+levels(CO2Data$MfrGroup) # 19levels 
+# some of categories in variable need to merge
+
+levels(CO2Data$MfrGroup)[levels(CO2Data$MfrGroup)%in%c("TATA MOTORS LTD; JAGUAR CARS LTD ; LAND ROVER","TATA MOTORS LTD; JAGUAR CARS LTD; LAND ROVER")]<-"TATA MOTORS LTD; JAGUAR CARS LTD; LAND ROVER"
+levels(CO2Data$MfrGroup)[levels(CO2Data$MfrGroup)%in%c("VW Group PC","VW GROUP PC")]<-"VW GROUP PC"
+levels(CO2Data$MfrGroup)[levels(CO2Data$MfrGroup)%in%c("TOYOTA -DAIHATSU GROUP","Toyota-Daihatsu Group" )]<-"TOYOTA-DAIHATSU GROUP"  
+levels(CO2Data$MfrGroup)[levels(CO2Data$MfrGroup)%in%c("POOL RENAULT","RENAULT")]<-"RENAULT" 
+levels(CO2Data$MfrGroup)
+# after merge some levels we get 15 ctegories 
+#####
+# variable: manufacturer name (35 levels)
+summary(CO2Data$MfrHarmonised)
+levels(CO2Data$MfrHarmonised)
+
+# variable:ApprovalNo
+# 
+# that consist of 3 parts, first part represent where the approal was issued, 
+# second part represent the year of direction,third part represent the
+# number of approval confirms
+# for this variable, we need to exact the second part, because that may more 
+# accurate represent the age of particular car than the variable of years.
+# other part of 'ApprovalNo' are not informative for the prediction of CO2
+# emission
+
+# Now Try to extract year of directive from the "ApprovalNo" variable 
+# create a new variable ApprovalYr which can replace the variable 
+# ApprovalNo' 
+CO2Data$ApprovalYr <- substr(CO2Data$ApprovalNo,
+                             start=regexpr("\\*",CO2Data$ApprovalNo)+1,
+                             stop=regexpr("\\/",CO2Data$ApprovalNo)-1)
+print(table(CO2Data$ApprovalYr))
+
+# still exist some typo, further correction:
+CO2Data$ApprovalYr[CO2Data$ApprovalYr%in%c("01","02001","11*2001")] <- "2001"
+CO2Data$ApprovalYr[CO2Data$ApprovalYr%in%c("20007","20207","207")] <- "2007"
+CO2Data$ApprovalYr[CO2Data$ApprovalYr=="2997"] <- "1997"
+CO2Data$ApprovalYr[CO2Data$ApprovalYr=="96"] <- "1996"
+CO2Data$ApprovalYr[CO2Data$ApprovalYr=="98"] <- "1998"
+print(table(CO2Data$ApprovalYr))
+# ks07 and KS07 should be 2007 by searching on the internet 
+CO2Data$ApprovalYr[grep("KS07",CO2Data$ApprovalNo)] <- 2007
+CO2Data$ApprovalYr[grep("ks07",CO2Data$ApprovalNo)] <- 2007
+CO2Data$ApprovalYr <- as.numeric(CO2Data$ApprovalYr)
+sum(is.na(CO2Data$ApprovalYr))
+# now there are 22 observations that we don't know the approval year
+# further exploration:
+print(CO2Data[is.na(CO2Data$ApprovalYr),])
+#we can see that some of observations that using the incorrect format, 
+# so we can not extract 
+# the correct year:  #5335  and #5417
+CO2Data$ApprovalYr[5335] <- 2007
+CO2Data$ApprovalYr[5417] <- 2001
+sum(is.na(CO2Data$ApprovalYr))
+# now #NA=20,those 20 obsevations we cannot get the information of approval year
+
+# variable: Make
+# manufacturer brand
+# this variable contains very similar information with the variable "MfrHarmonised"
+# so latter we need do further exploration to decide which varible need to drop in the model.
+
+# variable commercial name: represent vehicle model
+
+# variable:Registrations :total number of new cars of this specific model 
+#          that were registered in the specified year and member state.
+# this variable may irrelevant to the CO2 emmision of car intuitively.
+
+# variable: Mass of model
+
+# varible: Wheelbase: distance between the centres of the front and rear wheels (units: mm)
+
+#variable: SteeringAxle: width of the car (units: mm)
+
+# variable: OtherAxle: roughly width of the car (units: mm)
+# this variable provides the same information as the variable "SteeringAxle"
+
+# variable: FuelType, type of fuel
+length(levels(CO2Data$FuelType))
+levels(CO2Data$FuelType)
+# have the same problems with MfrGroup,need merge some repeating levels
+CO2Data$FuelType <- tolower(CO2Data$FuelType)
+CO2Data$FuelType<-as.factor(CO2Data$FuelType)
+unique(CO2Data$FuelType)
+# now it becomes 9 levels
+
+# variable technolType:this is a descriptive variable, blank entry represent
+# there's no innovative technologies the different code in this variable 
+# represent the different technologies
+print(table(CO2Data$TechnolType))
+# ITReduction: reduction in emissions from any innovative technologies
+# if variable "TechnolType" is bank entry then ITReduction will have to be 0
+
+CO2Data$ITReduction[CO2Data$TechnolType==" "] <- 0
+CO2Data$ITReduction<-as.integer(CO2Data$ITReduction)
+#remove the effect of varible ITreduction
+CO2Data$CO2 <- CO2Data$CO2 + CO2Data$ITReduction
+########################################################
+#        
+#             STEP 2.  Exploratory Analysis
+#
+######################################################
+CO2Data<-na.omit(CO2Data)
+summary(CO2Data$CO2)
+
+print(CO2Data[CO2Data$CO2==424,]) #266
+print(CO2Data[CO2Data$CO2==0,])
+
+# here we found some duplicated observations
+# ID: 1245  3558  3833 are the same except MemberStatere and Regitration.
+# So we need to identify the duplicate vehicles to aviod those observation 
+# unduly influence our fitting model.A "duplicate"is a vehicle with the same 
+# values of all variables except ID, Year, MemberState, ApprovalNumber and 
+# Registrations.create two variables:frequency of duplicate and weight for 
+# each observation
+
+Cre.Character<-apply(CO2Data[,-c(1:3,6,9)], MARGIN=1, FUN=paste, collapse=" ")
+Fre.Table<-as.data.frame(table(Cre.Character))
+CO2Data<-CO2Data[order(Cre.Character),]
+Fre.Table <- Fre.Table[order(Fre.Table$Cre.Character),]
+CO2Data$Freq <- rep(Fre.Table$Freq, Fre.Table$Freq)
+CO2Data$Weights <- 1/CO2Data$Freq
+CO2Data <- CO2Data[order(CO2Data$ID),]
+
+
+# distribution of CO2
+
+ggplot(CO2Data, aes(CO2)) +
+  geom_histogram(binwidth=20,colour="black", fill="light blue") +
+  labs(x="CO2 (g/km)",y="Number of Observations")+
+  geom_vline(aes(xintercept=mean(CO2, na.rm=T)),  
+             color="red", linetype="dashed", size=1)
+
+
+
+#################
+#relationships between emmision of CO2 and registration year
+
+library("RColorBrewer")
+CO2Data$Year<-as.factor(CO2Data$Year)
+Year_boxplot<-ggplot(CO2Data, aes(x=Year, y=CO2,fill=Year)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Registration Year") +
+  labs(x="Registration Year",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+Year_boxplot
+# boxplot shown that the CO2 emission decrease by registration year
+# There also exist another very similar variable: approval year
+
+CO2Data$ApprovalYr<-as.factor(CO2Data$ApprovalYr)
+ApprovalYr_boxplot<-ggplot(CO2Data, aes(x=ApprovalYr, y=CO2,fill=ApprovalYr)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Approval Year") +
+  labs(x="Approval Year",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+ApprovalYr_boxplot
+
+# CO2 emission of the car approved in 1996 is much higher than other cars.
+# but not much pattern with respect to others approval year. 
+# from this boxplot, only one car approved in 1997,2002,2006
+
+print(table(CO2Data$ApprovalYr))
+
+# according to this prequency table, most of cars approved in 2001 and 2007
+# during the year from 1997 to 2007, there's no obvious pattern, and some of approval
+# year just contain very little information, so here we can aggregate some of approval year
+# and redefine the category of approval year.
+
+levels(CO2Data$ApprovalYr)[levels(CO2Data$ApprovalYr)%in%c("1996")]<-"pre-1997"
+levels(CO2Data$ApprovalYr)[levels(CO2Data$ApprovalYr)%in%c("1997","1998","2001","2002")]<-"1997-2002"
+levels(CO2Data$ApprovalYr)[levels(CO2Data$ApprovalYr)%in%c("2003","2006","2007")]<-"post-2002"
+
+ApprovalYr2_boxplot<-ggplot(CO2Data, aes(x=ApprovalYr, y=CO2,fill=ApprovalYr)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Approval Year") +
+  labs(x="Approval Year",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+ApprovalYr2_boxplot
+
+# Now the picture is much clear that vehicles approved pre-2001 had higher CO2 emissions; 
+# not much difference in the other two approval year interval. 
+# Here we have 3 very similar variable contain the information about car manufacturer:MfrGroup,MfrHarmonised,Make
+
+print(table(CO2Data$MfrGroup))
+length(levels(CO2Data$MfrGroup))
+print(table(CO2Data$MfrHarmonised))
+length(levels(CO2Data$MfrHarmonised))
+print(table(CO2Data$Make))
+length(levels(CO2Data$Make))
+
+#colourCount<-length(unique(mtcars$hp))
+#getPalette<-colorRampPalette(brewer.pal(9, "BuPu"))
+
+MfrGroup_boxplot<-ggplot(CO2Data, aes(x=MfrGroup, y=CO2)) +
+  geom_boxplot(color="black", fill="light blue")+
+  ggtitle("Plot of Emmision of CO2 for Manufacturer Group") +
+  labs(x="Manufacturer Group",y="CO2 (g/km)")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none")+
+  coord_flip()
+MfrGroup_boxplot
+
+
+MfrGroup_boxplot2<-ggplot(CO2Data, aes(x=MfrHarmonised, y=CO2)) +
+  geom_boxplot(color="black", fill="light blue")+
+  ggtitle("Plot of Emmision of CO2 for Manufacture Brand") +
+  labs(x="Manufacturer Brand",y="CO2 (g/km)")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none")+
+  coord_flip()
+MfrGroup_boxplot2
+
+# For CO2 emission,there's no significant different between Manufacturer group but 
+# there's many difference between manufacture brand.So we decided to involve
+# the variable "MfrHarmonised" in the model.
+
+#############  MemberState ######
+
+State_boxplot2<-ggplot(CO2Data, aes(x=MemberState, y=CO2)) +
+  geom_boxplot(color="black", fill="light blue")+
+  ggtitle("Plot of Emmision of CO2 for different State") +
+  labs(x="Member State",y="CO2 (g/km)")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),legend.position="none")+
+  coord_flip()
+State_boxplot2
+
+########### Fuel Type ###########
+
+
+CO2Data$FuelType<-as.factor(CO2Data$FuelType)
+FuelType_boxplot<-ggplot(CO2Data, aes(x=FuelType, y=CO2,fill=FuelType)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Fuel Type") +
+  labs(x="Fuel Type",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+FuelType_boxplot
+
+# some electric vehicles which have non-zero CO2 emissions which seems odd
+
+print(CO2Data[CO2Data$FuelType=="electric" & CO2Data$CO2 > 0,])
+
+# 5 obsevations: PRIUS,RX450H,CT200H,AURIS,CAYENNE
+# we can decide their fuel type by checking the same CommercialName
+print(CO2Data[CO2Data$CommercialName=="PRIUS",])
+# all of them are petrol, only observation 750 is electric,so change it
+CO2Data$FuelType[750]<-"petrol"
+print(CO2Data[CO2Data$CommercialName=="RX450H",])
+# for the car model:"RX450H", we observe that only the observation 752 is electric,
+# others are petrol
+CO2Data$FuelType[752]<-"petrol"
+
+print(CO2Data[CO2Data$CommercialName=="RX450H",])
+print(CO2Data[CO2Data$CommercialName=="CT200H",])
+# "CT200H" could be either petrol or petrol-electric, but CO2 emmision for all 
+# "CT200H" are same,
+# observation 753 is electric, set it as petrol-electric
+CO2Data$FuelType[753]<-"petrol-electric"
+print(CO2Data[CO2Data$CommercialName=="AURIS",])
+# comparing the Mass, EngineSize and Power of the vehicles with all the others, it looks
+# like it should be petrol.
+CO2Data$FuelType[754]<-"petrol"
+print(CO2Data[CO2Data$CommercialName=="CAYENNE",])
+# "CAYENNE"should be either diesel or petrol, we found that CO2 emission of 
+# observation 760 is relatively low, very close to those "CAYENNE" using diesel, 
+# so the fuel type of observation 760 should be diesel.
+CO2Data$FuelType[760]<-"diesel"
+
+FuelType2_boxplot<-ggplot(CO2Data, aes(x=FuelType, y=CO2,fill=FuelType)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Fuel Type") +
+  labs(x="Fuel Type",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+FuelType2_boxplot
+
+#The fuel type can be aggregated by definition
+
+levels(CO2Data$FuelType)[levels(CO2Data$FuelType)%in%c("biodiesel","ng-biomethane")] <- "biofuel"
+levels(CO2Data$FuelType)[levels(CO2Data$FuelType)%in%c("diesel-electric","petrol-electric")] <- "hybridfuel"
+levels(CO2Data$FuelType)[levels(CO2Data$FuelType)%in%c("petrol","lpg")] <- "petrol type fuel"
+FuelType3_boxplot<-ggplot(CO2Data, aes(x=FuelType, y=CO2,fill=FuelType)) +
+  geom_boxplot()+
+  ggtitle("Plot of Emmision of CO2 for Fuel Type") +
+  labs(x="Fuel Type",y="CO2 (g/km)")+
+  scale_fill_brewer(palette="BuPu")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+FuelType3_boxplot
+
+# explore the continuous variable 
+# the correlation between variables 
+
+ContinuousVar<- CO2Data[, c(9:14,17,18)]
+head(ContinuousVar)
+#    
+#    chart.Correlation(ContinuousVar, histogram = TRUE, pch = 19)
+#
+#very high correlation between continuous varible
+
+
+########################################################
+#        
+#             STEP 3. Model Building
+#
+######################################################
+# For the modelling, electric cars should be handled separately.
+# since their emissions are all zero, so if we know the car is 
+# electronic then then emission will be 0.
+#
+# When fitting models, I'll usually weight each case 
+# as a way of dealing with duplicate vehicles in the data set. 
+# 
+# When doing the exploratory analysis, we found that the variable:"FuelMode" 
+# have been used inconsistently, so not going to consider in models
+#
+# Here we create the fitting data that exclude the electronic cars
+
+FittingData <- CO2Data[CO2Data$FuelType !="electric",]
+levels(FittingData$FuelType)
+FittingData$FuelType <- droplevels(FittingData$FuelType)
+
+#start from linear model:
+# we use 2/3 dataset as training data,and 1/3 dataset as tesing data
+# we decide to use test MSE to measure the performance of model.
+#
+# in order to get a stable measurements, we decided to random split 
+# dataset 10 times to train and test model and find the average MSE
+
+###########################################
+#
+#     stepAIC + linear regression 
+#
+###########################################
+# select important variables using stepAIC
+
+
+linear_model0<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +Mass+Wheelbase+SteeringAxle+OtherAxle+EngineSize+Power,data = FittingData)
+
+linear_variables<-stepAIC(linear_model0,direction = "backward")
+linear_variables$anova
+# not eliminate any variables in the dataset
+# fit model
+set.seed(12)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+linear_model0<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +Mass+Wheelbase+SteeringAxle+OtherAxle+EngineSize+Power,data = train_CO2,weights = Weights)
+summary(linear_model0)  #Adjusted R-squared is 0.8487
+# using anova select models  whether or not remove the variables:MemberState and Registration
+linear_model1<-lm(CO2~MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +Mass+Wheelbase+SteeringAxle+OtherAxle+EngineSize+Power,data = train_CO2,weights = Weights)
+linear_model2<-lm(CO2~MfrHarmonised+ApprovalYr+Year+FuelType
+                  +Mass+Wheelbase+SteeringAxle+OtherAxle+EngineSize+Power,data = train_CO2,weights = Weights)
+anova(linear_model0,linear_model1,linear_model2,test="F")
+# anova table shows that variable MemberState and Registration also important for linear regression
+# so full model is the best
+
+###############
+#
+# LASSO + LM
+#
+################
+
+# we use lasso for continous variable selection, categorical variables will not involved
+
+set.seed(1)
+lasso.data<-FittingData[,-c(1:8,15,16,19,20,21,22,23)]
+str(lasso.data)
+lasso_matrix=model.matrix(CO2~.,lasso.data)[,-1]
+y=lasso.data$CO2
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=lasso_matrix[train,]
+test_CO2=lasso_matrix[-train,]
+set.seed(1)
+cv.lasso<-cv.glmnet(train_CO2,y[train],alpha=1)
+plot(cv.lasso)
+bestlam_lasso<-cv.lasso$lambda.1se
+bestlam_lasso
+lasso.model<-glmnet(train_CO2,y[train],alpha=1,lambda=bestlam_lasso)
+lasso.coef<-predict(lasso.model,type="coefficients")
+lasso.coef
+
+# now the coefficient of Registration,wheelbase, steeringaxle, otheraxle becomes 0
+# build the linear model based on variables that selected by lasso
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+lasso.lm.model<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                   +Mass+EngineSize+Power,data = train_CO2,weights = Weights)
+summary(lasso.lm.model) #adjusted R^2 0.8499
+
+lasso_model.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  lasso.lm.model<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                     +Mass+EngineSize+Power,data = train_CO2,weights = Weights)
+  lasso_model_prediction<-predict(lasso.lm.model,newdata = test_CO2)
+  lasso_model.MSE[i]=mean((test_CO2$CO2 - lasso_model_prediction)^ 2)
+}
+lasso_model.MSE
+mean(lasso_model.MSE) 
+#mean MSE= 286.5125
+
+
+# add interaction 
+
+lasso.lm.model1<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                    +Mass+EngineSize+Power+FuelType:(Mass+EngineSize+Power),data = train_CO2,weights = Weights)
+summary(lasso.lm.model1) #adjusted R^2 0.86
+lasso_model1_prediction<-predict(lasso.lm.model1,newdata = test_CO2)
+
+#calculate 10 times MSE
+lasso_model1.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  lasso.lm.model1<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                      +Mass+EngineSize+Power+FuelType:(Mass+EngineSize+Power),data = train_CO2,weights = Weights)
+  lasso_model1_prediction<-predict(lasso.lm.model1,newdata = test_CO2)
+  lasso_model1.MSE[i]=mean((test_CO2$CO2 - lasso_model1_prediction)^ 2)
+}
+lasso_model1.MSE
+mean(lasso_model1.MSE)
+#mean MSE= 264.1954
+
+
+##################
+#
+#    PCA + LM 
+#
+#################
+
+# by doing the exploratory analysis, high corelation between contionous variables
+# PCA is a good method to overcome this problem
+# PCA for continuous variables(in order to improve the interpretation
+# we just suing PCA for variables that related to car features)
+ContinuousVar_features<-FittingData[, c(11:14,17,18)]
+PCs <- prcomp(ContinuousVar_features, scale=TRUE, retx=TRUE) 
+print(summary(PCs))
+#PC1 PC2 can interpret the most of variance in X (90.42%)
+print(round(PCs$rotation,3)) #variable loadings 
+FittingData_PCA <- cbind(FittingData, PCs$x)
+# fit linear model
+set.seed(12)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+
+linear_model3<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +PC1+PC2,weights = Weights,data =train_CO2)
+summary(linear_model3) #adjusted R squared=0.8192   
+
+# Try the interactions to improve the model
+linear_model4<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +PC1+PC2+(PC1+Year):FuelType,weights = Weights,data =train_CO2)
+summary(linear_model4) #adjusted R squared=0.8223
+
+linear_model5<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                  +PC1+PC2+(PC1+PC2+Year):FuelType,weights = Weights,data =train_CO2)
+summary(linear_model5) #adjusted R squared=0.8281
+linear_model_prediction<-predict(linear_model5,newdata = test_CO2)
+
+#calculate 10 times MSE for linear model with interaction
+PCA_lm5.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  linear_model5<-lm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                    +PC1+PC2+(PC1+PC2+Year):FuelType,weights = Weights,data =train_CO2)
+  linear_model_prediction<-predict(linear_model5,newdata = test_CO2)
+  PCA_lm5.MSE[i]=mean((test_CO2$CO2 - linear_model_prediction)^ 2)
+}
+PCA_lm5.MSE
+mean(PCA_lm5.MSE) 
+#mean MSE= 308.4873
+
+###################
+#
+#  LASSO + GLM
+#
+###################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+
+lasso.glm.model<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                     +Mass+EngineSize+Power,family=Gamma(link = "log"),
+                     data = train_CO2,weights = Weights)
+summary(lasso.glm.model)        #AIC: 66038          
+lasso.glm.predict<-predict(lasso.glm.model,newdata =test_CO2,type = "response",se.fit = T)
+lasso_glm.MSE=mean((test_CO2$CO2-lasso.glm.predict$fit)^ 2)
+lasso_glm.MSE 
+#305.3085
+
+
+lasso_glm.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  lasso.glm.model<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                       +Mass+EngineSize+Power,
+                       family=Gamma(link = "log"),data = train_CO2,weights = Weights)
+  lasso_glm_prediction<-predict(lasso.glm.model,newdata = test_CO2,type = "response",se.fit = T)
+  lasso_glm.MSE[i]=mean((test_CO2$CO2 - lasso_glm_prediction$fit)^ 2)
+}
+lasso_glm.MSE
+mean(lasso_glm.MSE) 
+
+#325.6038
+
+
+
+# add interaction 
+
+lasso.glm.model2<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                      +Mass+EngineSize+Power+FuelType:(Mass+EngineSize+Power),
+                      family=Gamma(link = "log"),data = train_CO2,weights = Weights)
+summary(lasso.glm.model2) #AIC:  65645
+lasso_glm2_prediction<-predict(lasso.glm.model2,newdata = test_CO2,type = "response",se.fit = T)
+lasso_glm2.MSE=mean((test_CO2$CO2-lasso_glm2_prediction$fit)^ 2)
+lasso_glm2.MSE #272.7088
+
+
+#calculate 10 times MSE
+lasso_glm1.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  lasso.glm.model1<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType
+                        +Mass+EngineSize+Power+FuelType:(Mass+EngineSize+Power),
+                        family=Gamma(link = "log"),data = train_CO2,weights = Weights)
+  lasso_glm1_prediction<-predict(lasso.glm.model1,newdata = test_CO2,type = "response",se.fit = T)
+  lasso_glm1.MSE[i]=mean((test_CO2$CO2 - lasso_glm1_prediction$fit)^ 2)
+}
+lasso_glm1.MSE
+mean(lasso_glm1.MSE) #mean testing MSE=284.5196
+
+
+############################
+#
+#         GLM+PCA 
+#
+###########################
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+PCA_glm1<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+              +PC1+PC2,family=Gamma(link = "log"),weights = Weights,data =train_CO2)
+glm1.predict<-predict(PCA_glm1,newdata =test_CO2,type = "response",se.fit = T)
+mean((test_CO2$CO2 - glm1.predict$fit )^ 2)
+# Run 10 times:336.763,333.7344,340.3423,338.0928,338.249,334.2972,343.956,350.0585
+#              336.5921,337.884
+a<-c(336.763,333.7344,340.3423,338.0928,338.249,334.2972,343.956,350.0585,
+     336.5921,337.884)
+mean(a)
+# 338.9969
+
+# improved by adding interactions
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+PCA_glm2<-glm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+              +PC1+PC2+(PC1+PC2+Year):FuelType,family=Gamma(link = "log"),weights = Weights,
+              data =train_CO2)
+glm2.predict<-predict(PCA_glm2,newdata =test_CO2,type = "response",se.fit = T)
+mean((test_CO2$CO2 - glm2.predict$fit )^ 2)  
+# randomly split dataset 10 times,to train and test model,we get the following solutions:
+# 314.77，328.5843，319.2614，309.15，325.79，311.34，315.017，311.9151，314.59，312.8095
+b<-c(314.77,328.5843,319.2614,309.15,325.79,311.34,315.017,311.9151,314.59,312.8095)
+mean(b) #Mean MSE=316.3227
+
+
+#################################
+#
+#         Ridge Regression
+################################
+
+NewCO2<-FittingData[,-c(1,4,6,7,8,16,19,20,22,23)]
+NewCO2_matrix=model.matrix(CO2~.,NewCO2)[,-1]
+y=NewCO2$CO2
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=NewCO2_matrix[train,]
+test_CO2=NewCO2_matrix[-train,]
+set.seed(1)
+cv.ridge<-cv.glmnet(train_CO2,y[train],alpha=0)
+plot(cv.ridge)
+bestlam_ridge<-cv.ridge$lambda.1se
+bestlam_ridge        #4.918
+ridge.model<-glmnet(train_CO2,y[train],alpha=0,lambda=bestlam_ridge)
+ridge.predict<-predict(ridge.model,newx=test_CO2)
+mean((ridge.predict-y[-train])^2) #307.2
+
+Ridge.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=NewCO2_matrix[train,]
+  test_CO2=NewCO2_matrix[-train,]
+  ridge.model<-glmnet(train_CO2,y[train],alpha=0,lambda=bestlam_ridge)
+  ridge.predict<-predict(ridge.model,newx=test_CO2)
+  Ridge.MSE[i]=mean((y[-train] -ridge.predict )^ 2)
+}
+Ridge.MSE
+mean(Ridge.MSE)
+# mean of MSE=300.6822
+
+#############################
+#
+#   Regression Tree
+#
+###########################
+
+# cannot use package "tree",the levels larger than 32
+# using package "rpart"
+
+# regression tree using full variables
+tree.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData[train,]
+  test_CO2=FittingData[-train,]
+  tree.model<- rpart(formula = CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                     +OtherAxle+EngineSize+Power,data = train_CO2,method  = "anova")
+  predict.tree <- predict(tree.model, newdata = test_CO2)
+  tree.MSE[i]=mean((test_CO2$CO2 - predict.tree )^ 2) 
+}
+tree.MSE
+mean(tree.MSE) #451.8
+
+tuned.r <- tune(rpart, train.x = CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                +OtherAxle+EngineSize+Power,data = train_CO2,
+                validation.x =test_CO2)
+tuned.r$best.model
+
+
+
+## plot the tree
+plot(tree.model, uniform=TRUE, 
+     main="Regression Tree for CO2 Emission") # plot tree
+text(tree.model1, use.n=TRUE, all=TRUE, cex=.8, pretty = 0)
+
+###########################
+#
+# regression tree + lasso
+#
+###########################
+lasso.tree.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData[train,]
+  test_CO2=FittingData[-train,]
+  lasso.tree.model<- rpart(formula = CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                           +OtherAxle+EngineSize+Power,data = train_CO2,method  = "anova")
+  lasso.predict.tree <- predict(lasso.tree.model, newdata = test_CO2)
+  lasso.tree.MSE[i]=mean((test_CO2$CO2 - lasso.predict.tree )^ 2) 
+}
+lasso.tree.MSE
+mean(lasso.tree.MSE) 
+#482.7541
+
+###############################
+#
+# regression tree using PCA
+#
+###############################
+
+PCA.tree.MSE<-rep(0,10)
+for(i in 1:10){
+  train<-sample(seq(14079),9386,replace = F)
+  train_CO2=FittingData_PCA[train,]
+  test_CO2=FittingData_PCA[-train,]
+  PCA.tree.model<- rpart(formula = CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+PC1+PC2
+                         ,data = train_CO2,method  = "anova")
+  PCA.predict.tree <- predict(PCA.tree.model, newdata = test_CO2)
+  PCA.tree.MSE[i]=mean((test_CO2$CO2 - PCA.predict.tree )^ 2) 
+}
+PCA.tree.MSE
+mean(PCA.tree.MSE) #596.1669
+
+#single tree models suffer from high variance, bagging is one of the method to
+#overcome this problems
+#Averaging across multiple trees reduces the variability of any one tree and 
+#reduces overfitting, which improves predictive performance.
+
+#######################
+#    
+#       Bagging
+#
+######################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+bagging.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                            +OtherAxle+EngineSize+Power,data = train_CO2,importance=T,mtry=12)
+# n.tree can set a large number, no overfitting problem,mtry=the number of variables in model for the bagging
+
+
+bagging.predict <- predict(bagging.model, test_CO2)
+plot(bagging.predict, test_CO2$CO2)
+abline(0,1)
+mean((test_CO2$CO2 - bagging.predict)^ 2)
+# MSE=120.041
+
+##################
+#
+# bagging + lasso
+#
+####################
+lasso.bagging.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                                  +EngineSize+Power,data = train_CO2,importance=T,mtry=8)
+lasso.bagging.predict <- predict(lasso.bagging.model, test_CO2)
+mean((test_CO2$CO2 - lasso.bagging.predict)^ 2) #MSE=134.174
+
+#################
+#
+# bagging + PCA
+#
+################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+PCA.bagging.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                                +PC1+PC2,data = train_CO2,importance=T,mtry=8)
+PCA.bagging.predict <- predict(PCA.bagging.model, test_CO2)
+mean((test_CO2$CO2 - PCA.bagging.predict)^ 2) #MSE=191.0423
+
+
+#################################
+#
+#      Random Forest
+#
+################################
+
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+randomForest.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                                 +OtherAxle+EngineSize+Power,data = train_CO2,importance=T)
+# ntree can set a large number, no overfitting problem,mtry=the number of variables divided by 3
+
+plot(randomForest.model) #plot show that from the ntree=100,the error will not change 
+# set ntree=100
+randomForest.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                                 +OtherAxle+EngineSize+Power,data = train_CO2,importance=T,ntree=100)
+importance(randomForest.model) #importance of variables
+varImpPlot(randomForest.model) 
+randomForest.predict<-predict(randomForest.model,newdata=test_CO2)
+randomForest.MSE<-mean((randomForest.predict-test_CO2$CO2)^2) #MSE=114.7
+randomForest.MSE #MSE=114.7
+
+
+##########################
+#
+# random forest + lasso
+#
+##########################
+
+lasso.randomForest.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                                       +EngineSize+Power,data = train_CO2,importance=T,ntree=100)
+lasso.randomForest.predict<-predict(lasso.randomForest.model,newdata=test_CO2)
+lasso.randomForest.MSE<-mean((lasso.randomForest.predict-test_CO2$CO2)^2) 
+lasso.randomForest.MSE  #MSE=143.27
+
+
+
+######################
+#
+#random forest + PCA
+#
+#####################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+PCA.randomForest.model<-randomForest(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations
+                                     +PC1+PC2,data = train_CO2,importance=T,ntree=100)
+PCA.randomForest.predict<-predict(PCA.randomForest.model,newdata=test_CO2)
+PCA.randomForest.MSE<-mean((PCA.randomForest.predict-test_CO2$CO2)^2) 
+PCA.randomForest.MSE #225.536
+
+
+
+
+
+############################
+#
+#       Boosting
+#
+############################
+
+set.seed (1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+boost.model = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                   +OtherAxle+EngineSize+Power,data = train_CO2, distribution = "gaussian")
+
+summary(boost.model)
+boost.model.predict<-predict(boost.model,newdata=test_CO2,n.trees = 100)
+boost.MSE<-mean((boost.model.predict-test_CO2$CO2)^2)
+boost.MSE  #354.87
+
+
+# by using the defualt parameters, n.tree only equal to 100, which is too small
+# need find the best value for n.tree to improve the performance of model
+
+boost.model1 = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                    +OtherAxle+EngineSize+Power,data = train_CO2, distribution = "gaussian",
+                    n.trees = 10000, interaction.depth = 3,shrinkage = 0.1)
+# reducing the learning rate,increase the depth of each tree from using a single split to 3 splits
+boost.model.predict1<-predict(boost.model1,newdata=test_CO2,n.trees = 10000)
+boost.MSE1<-mean((boost.model.predict1-test_CO2$CO2)^2)
+# grid method to select the good parameters
+# with varying learning rates and tree depth
+
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .1, .3),
+  interaction.depth = c(1, 3, 5),
+  optimal_trees = 0,               
+  min_RMSE = 0               
+)
+nrow(hyper_grid)
+# We loop through each hyperparameter combination and apply 8000 trees. 
+# randomize data
+random_index <- sample(1:nrow(train_CO2), nrow(train_CO2))
+random_CO2_train <- train_CO2[random_index, ]
+
+for(i in 1:nrow(hyper_grid)) {
+  # train model
+  gbm.tune <- gbm(
+    formula=CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+    +OtherAxle+EngineSize+Power,
+    distribution = "gaussian",
+    data = random_CO2_train,
+    n.trees = 8000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    train.fraction = .75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE)
+  hyper_grid$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+  hyper_grid$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+}
+hyper_grid %>%dplyr::arrange(min_RMSE) %>%head(10)
+# Now we get the best parameters for our model
+# shrinkage=0.01,interaction.depth=5，n.tree=7870,RMSE=12.187
+
+boost.model2 = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                    +OtherAxle+EngineSize+Power,data = train_CO2, distribution = "gaussian",
+                    n.trees = 7870, interaction.depth =5,shrinkage = 0.1)
+
+boost.model.predict2<-predict(boost.model2,newdata=test_CO2,n.trees = 7870)
+boost.MSE2<-mean((boost.model.predict2-test_CO2$CO2)^2)   
+boost.MSE2 # test MSE=115.9535 (with the best parameters)   
+# very close the random forest
+
+#######################
+#
+# bostingtree + lasso
+#
+########################
+
+# first tune the best parameters
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .1, .3),
+  interaction.depth = c(1, 3, 5),
+  optimal_trees = 0,               
+  min_RMSE = 0               
+)
+nrow(hyper_grid)
+# We loop through each hyperparameter combination and apply 8000 trees. 
+# randomize data
+random_index <- sample(1:nrow(train_CO2), nrow(train_CO2))
+random_CO2_train <- train_CO2[random_index, ]
+
+for(i in 1:nrow(hyper_grid)) {
+  # train model
+  gbm.tune <- gbm(
+    formula=CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+    +EngineSize+Power,
+    distribution = "gaussian",
+    data = random_CO2_train,
+    n.trees = 8000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    train.fraction = .75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE)
+  predict(gbm.tune,)
+  hyper_grid$optimal_trees[i] <- which.min()
+  hyper_grid$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+}
+hyper_grid %>%dplyr::arrange(min_RMSE) %>%head(10)
+# best parameter:shrinkage=0.1,interaction.depth=3,optimal trees=7192
+lasso.boost.model = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                         +EngineSize+Power,data = train_CO2, distribution = "gaussian",
+                         n.trees =7192 , interaction.depth =3,shrinkage =0.1)
+
+lasso.boost.model.predict<-predict(lasso.boost.model,newdata=test_CO2,n.trees =7192 )
+lasso.boost.MSE<-mean((lasso.boost.model.predict-test_CO2$CO2)^2)   
+lasso.boost.MSE #MSE=148.4918
+
+
+#######################
+#
+# PCA + boosting tree
+#
+########################
+set.seed (1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData_PCA[train,]
+test_CO2=FittingData_PCA[-train,]
+
+# first tune the best parameters
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .1, .3),
+  interaction.depth = c(1, 3, 5),
+  optimal_trees = 0,               
+  min_RMSE = 0               
+)
+nrow(hyper_grid)
+# We loop through each hyperparameter combination and apply 8000 trees. 
+# randomize data
+random_index <- sample(1:nrow(train_CO2), nrow(train_CO2))
+random_CO2_train <- train_CO2[random_index, ]
+
+for(i in 1:nrow(hyper_grid)) {
+  # train model
+  gbm.tune <- gbm(
+    formula=CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+PC1+PC2,
+    distribution = "gaussian",
+    data = random_CO2_train,
+    n.trees = 8000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    train.fraction = .75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE)
+  hyper_grid$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+  hyper_grid$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+}
+hyper_grid %>%dplyr::arrange(min_RMSE) %>%head(10)
+# best parameter:shrinkage=0.1,interaction.depth=5
+PCA.boost.model = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                       +EngineSize+Power,data = train_CO2, distribution = "gaussian",
+                       n.trees =8000, interaction.depth =5,shrinkage =0.1)
+
+PCA.boost.model.predict<-predict(PCA.boost.model,newdata=test_CO2,n.trees =8000 )
+PCA.boost.MSE<-mean((PCA.boost.model.predict-test_CO2$CO2)^2)   
+PCA.boost.MSE 
+#MSE=142.9657
+
+
+##################################################################
+#
+# support vector regression( two type: kernel=linear and radial )
+#
+##################################################################
+# A major benefit of using SVR is that it is a non-parametric technique
+# the output model from SVR does not depend on distributions of the underlying 
+# dependent and independent variables.
+
+# Building the SVR
+set.seed (1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=FittingData[train,]
+test_CO2=FittingData[-train,]
+
+##########################################
+#
+# linear kernel support vector regression
+#
+###########################################
+
+SVR.linear.model<-svm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                      +OtherAxle+EngineSize+Power,train_CO2,kernel="linear")
+summary(SVR.linear.model)
+#by default the parameter for this linear SVR is cost=1, gamma=0.013,epsilon=0.1
+SVR.model.linear.predict<- predict(SVR.linear.model,test_CO2)
+SVR.linear.MSE<-mean((SVR.model.linear.predict-test_CO2$CO2)^2) 
+SVR.linear.MSE #TEST MSE=285.6251
+
+# selecting best parameter for SVR (kernel="linear")
+
+SVR.linear.tune<-tune(svm,CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                      +OtherAxle+EngineSize+Power, data=train_CO2,ranges=list(elsilon=seq(0,0.05),cost=2^(3:6)),kernel="linear")
+print(SVR.linear.tune)      #tune: elsilon:0  cost=16
+
+Bst.linear.Model<-SVR.linear.tune$best.model
+summary(Bst.linear.Model)   #cost=16 gamma=0.013  epsilon=0.1  gamma=0.01315789
+SVR.linear.predict<-predict(Bst.linear.Model,test_CO2)
+head(SVR.linear.predict)
+SVR.linear.MSE<-mean((SVR.linear.predict-test_CO2$CO2)^2)   
+SVR.linear.MSE # test MSE= 287.0517
+
+#################################################
+#
+# Lasso + linear kernel support vector regression
+#
+###################################################
+SVR.linear.tune1<-tune(svm,CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                       +EngineSize+Power, data=train_CO2,ranges=list(cost=2^(3:6)),kernel="linear")
+print(SVR.linear.tune) 
+Bst.linear.Model1<-svm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                       +EngineSize+Power,train_CO2,kernel="linear",cost=16 )
+SVR.linear.predict1<-predict(Bst.linear.Model1,test_CO2)
+SVR.linear.MSE1<-mean((SVR.linear.predict1-test_CO2$CO2)^2)  
+
+#test MSE = 284.53
+
+############################################
+#
+# radial kernel support vector regression
+#
+##########################################
+
+# using full variables 
+
+SVR.nonlinear.model<-svm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                         +OtherAxle+EngineSize+Power,train_CO2,kernel="radial")
+summary(SVR.nonlinear.model) # cost=1 gamma=0.013158  epsilon=0.1
+SVR.model.nonlinear.predict<- predict(SVR.nonlinear.model,test_CO2)
+SVR.nonlinear.MSE<-mean((SVR.model.nonlinear.predict-test_CO2$CO2)^2) #TEST MSE= 230.0393
+
+# selecting best parameter for SVR (kernel="radial")
+SVR.nonlinear.tune<-tune(svm,CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                         +OtherAxle+EngineSize+Power, data=train_CO2,ranges=list(cost=2^(3:5),gamma=2^(-8:-3)))
+print(SVR.nonlinear.tune) # best parameter is cost=16,gamma=0.0625
+Bst.nonlinear.Model1<-SVR.nonlinear.tune$best.model
+summary(Bst.nonlinear.Model1)
+SVR.nonlinear.predict1<-predict(Bst.nonlinear.Model1,test_CO2)
+SVR.nonlinear.MSE1<-mean((SVR.nonlinear.predict1-test_CO2$CO2)^2)   # test MSE=149.3791
+
+#################################################
+#
+# Lasso + radial kernel support vector regression
+#
+#################################################
+
+# selecting best parameter
+SVR.nonlinear.tune2<-tune(svm,CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                          +EngineSize+Power, data=train_CO2,ranges=list(cost=2^(3:5),gamma=2^(-6:-3)))
+print(SVR.nonlinear.tune2) # best parameter is cost=16,gamma=0.0625
+
+Bst.nonlinear.Model2<-svm(CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                          +EngineSize+Power, data=train_CO2,kernel="radial",cost=16,gamma=0.0625)
+SVR.nonlinear.predict2<-predict(Bst.nonlinear.Model2,test_CO2)
+SVR.nonlinear.MSE2<-mean((SVR.nonlinear.predict2-test_CO2$CO2)^2) #MSE=178.9117
+
+
+
+
+
+#########################################################
+#
+#      Classification for the level of vechicle tax rate
+#
+#########################################################
+
+# In UK car owners need to pay a rate based on a vehicle’s CO2 emissions
+# the the tax rate for car that emissions of CO2 below 150g/km is below 205 pounds, the tax rate for
+# car that emission above 150g/km will jump to 515.
+
+# So for the car emisson above 150, we classify that car to the class: high tax rate car
+# for the car emisson below 150, we classify that car to the class: low tax rate car
+
+# create the categorical variable: tax rate level:low high
+tax.rate<-rep("Low",14079)
+CO2.col<-FittingData$CO2
+tax.rate[CO2.col>150]<-"High"
+tax.rate<-as.factor(tax.rate)
+classification.data<-cbind(FittingData,tax.rate)
+classification.data<-classification.data[,-10]
+###########################################
+#
+#           logistic regression
+#
+############################################
+
+
+# using full variables in the model
+
+set.seed (1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+logistic.model1<-glm(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                     +OtherAxle+EngineSize+Power,train_CO2,family = "binomial")
+contrasts(tax.rate)
+# high:0     low:1
+summary(logistic.model1)
+logistic.pros1<-predict(logistic.model1, newdata = test_CO2,type = "response")
+logistic.predict1<-rep("High",4693)
+logistic.predict1[logistic.pros1>0.5]="Low"
+test.rate<-test_CO2$tax.rate
+# table(logistic.predict1,test.rate)
+mean(logistic.predict1==test.rate)
+
+#correct classification rate = 0.8734285,0.8774771,0.8689538,0.8761986,0.8730023,
+#                              0.8757724,0.8666098,0.8744939，0.8736416，0.8678883
+
+1-mean(c(0.8734285,0.8774771,0.8689538,0.8761986,0.8730023,0.8757724,
+       0.8666098,0.8744939,0.8736416,0.8678883))
+# mean misclassfication error rate= 0.1272534
+
+
+#################################
+#
+# lasso + logistic regression
+#
+#################################
+
+set.seed(1)
+lasso.class.data<-classification.data[,c(9:13,16,17,23)]
+str(lasso.class.data)
+lasso.class_matrix=model.matrix(tax.rate~.,lasso.class.data)[,-1]
+y=lasso.class.data$tax.rate
+y<-ifelse(lasso.class.data$tax.rate=="Low",1,0)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=lasso.class_matrix[train,]
+test_CO2=lasso.class_matrix[-train,]
+set.seed(1)
+cv.lasso.class<-cv.glmnet(train_CO2,y[train],alpha=1,type.measure="class",family="binomial")
+plot(cv.lasso)
+bestlam_lasso<-cv.lasso.class$lambda.1se
+bestlam_lasso   # 0.03150995
+coef(cv.lasso.class,s=bestlam_lasso)
+# 5 continuous variables are become 0:Registrations,Wheelbase,SteeringAxle,OtherAxle,
+# EngineSize  
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+logistic.model2<-glm(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                    +Power,train_CO2,family = "binomial")
+contrasts(tax.rate)
+# high:0     low:1
+logistic.pros2<-predict(logistic.model2, newdata = test_CO2,type = "response")
+logistic.predict2<-rep("High",4693)
+logistic.predict2[logistic.pros2>0.5]="Low"
+test.rate<-test_CO2$tax.rate
+# table(logistic.predict1,test.rate)
+mean(logistic.predict2!=test.rate)
+# error rate = 0.1289154,0.1333902,0.1265715,0.1346687,0.1274238,
+#              0.1357341,0.1325378,0.1350948,0.1391434,0.1393565
+mean(c(0.1289154,0.1333902,0.1265715,0.1346687,0.1274238,
+       0.1357341,0.1325378,0.1350948,0.1391434,0.1393565))
+# error rate=0.133
+
+#########################################
+#
+#   p value select continuous variables
+#
+#########################################
+
+# according to the p-value, for continuous variable:"Registrations" and "SteeringAxle"
+# are very large so we can try the model that removing these 2 variables 
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+logistic.model3<-glm(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass+Wheelbase
+                     +OtherAxle+EngineSize+Power,train_CO2,family = "binomial")
+
+logistic.pros3<-predict(logistic.model3, newdata = test_CO2,type = "response")
+logistic.predict3<-rep("High",4693)
+logistic.predict3[logistic.pros3>0.5]="Low"
+test.rate<-test_CO2$tax.rate
+# table(logistic.predict1,test.rate)
+mean(logistic.predict3!=test.rate)
+# error rate = 0.1233752,0.1284892,0.1265715,0.1235883,0.1250799,0.1306201
+#            0.129980,0.1225229,0.1250799,0.1338163
+mean(c(0.1233752,0.1284892,0.1265715,0.1235883,0.1250799,0.1306201,
+       0.129980,0.1225229,0.1250799,0.1338163))
+# error rate=0.1269123
+
+#############
+#
+#     LDA
+#
+############
+# using full variables in LDA
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+lda.model1<-lda(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                  +OtherAxle+EngineSize+Power,data=train_CO2)
+lda.pred1<-predict(lda.model1,test_CO2)
+lda.class1<-lda.pred1$class
+mean(lda.class1!=test_CO2$tax.rate)
+# calculate the misclassfication error rate for ten time 
+# misclassfication error rate=0.1338163,0.1289154,0.1438312, 0.1295547,0.1325378,0.1389303
+#                             0.1408481,0.132964,0.1357341,0.1363733
+mean(c(0.1338163,0.1289154,0.1438312, 0.1295547,0.1325378,0.1389303,
+       0.1408481,0.132964,0.1357341,0.1363733))
+# mean test dataset error rate is 0.1353505
+
+##################
+#
+# LDA + lasso
+#
+#################
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+lda.model2<-lda(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                +Power,data=train_CO2)
+lda.pred2<-predict(lda.model2,test_CO2)
+lda.class2<-lda.pred2$class
+mean(lda.class2!=test_CO2$tax.rate)
+# calculate the error rate for ten time 
+# error rate=0.1374387,0.143192,0.1376518,0.1374387,0.1468144
+#            0.1404219,0.1370126,0.1376518,0.1387172,0.1434051
+mean(c(0.1374387,0.143192,0.1376518,0.1374387,0.1468144,
+     0.1404219,0.1370126,0.1376518,0.1387172,0.1434051))
+# mean test dataset error rate is 0.1399744
+
+
+############
+#
+#    QDA: error
+#
+############
+# using full variables in model
+set.seed(1)
+qda.data<-classification.data[,c(2,3,5,9:14,16,17,20,23)]
+qda.matrix=model.matrix(tax.rate~.,qda.data)[,-1]
+
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=qda.matrix[train,]
+test_CO2=qda.matrix[-train,]
+
+qda.model1<-qda(train_CO2,y[train])
+qda.pred1<-predict(qda.model1,test_CO2)
+qda.class1<-qda.pred1$class
+mean(qda.class1!=test_CO2$tax.rate)
+# exist problem: rank deficiency in group Low
+# some variables are collinear and one or more covariance matrices cannot be inverted 
+# to obtain the estimates in group Low
+
+
+
+############
+#
+#    KNN
+#
+############
+# scale the continuous variable 
+kNN.data<-classification.data[,c(2,3,5,9:14,16,17,20,23)]
+standardized.continuous<-scale(kNN.data[,c(4:8,10,11)]) 
+categorical.var<-kNN.data[,c(1,2,3,9,12,13)]
+kNN.data<-cbind(standardized.continuous,categorical.var)
+qda.matrix.X=model.matrix(tax.rate~.,kNN.data)[,-1]
+y=kNN.data$tax.rate
+
+train<-sample(seq(14079),9386,replace = F)
+train.X<-qda.matrix.X[train,]
+test.X<-qda.matrix.X[-train,]
+train.Y<-y[train]
+test.Y<-y[-train]
+set.seed(1)
+knn.predict<-knn(train.X,test.X,train.Y,k=5)
+table(test.Y,knn.predict)
+mean(test.Y!=knn.predict)
+# try the different k value: K=1,error rate is 0.136
+#                            K=3,error rate is 0.131
+#                            K=5,error rate is 0.123
+#                            K=8,error rate is 0.122
+#                            K=10,error rate is 0.115
+#                            K=15,error rate is 0.117
+#                            K=20,eeror rate is 0.12
+#K=10 is the best error rate is 0.122
+
+
+
+############################
+#
+# tree for classification
+#
+############################
+# for variable: MfrHamonised has 35 levels,for the tree function, it only allows 32 levels 
+# categorical variable, so first convert this variable to dummy variable and merge to dataset
+library(tree)
+MfrHarmonised.dummy<-model.matrix(tax.rate~.,classification.data[,c(5,23)])[,-1]
+tree.data<-classification.data[,c(2,3,9:14,16,17,20,23)]
+tree.data<-data.frame(MfrHarmonised.dummy,tree.data)
+
+# estimate the test error using test dataset
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=tree.data[train,]
+test_CO2=tree.data[-train,]
+tax.rate<-tree.data$tax.rate
+## Run classification tree on the traning data
+tree.tax_rate <-tree(tax.rate~., data = train_CO2)
+## Predict the class on the test data
+tree.tax_rate.pred <-predict(tree.tax_rate, test_CO2, type="class")
+## Confusion matrix
+table(tree.tax_rate.pred, tax.rate[-train])
+## Misclassification error=0.1557639
+mean(tree.tax_rate.pred!=tax.rate[-train])
+
+## prunning the tree  to improve results
+set.seed(1)
+cv.tax_rate<-cv.tree(tree.tax_rate, FUN = prune.misclass,K=10)
+cv.tax_rate
+
+par(mfrow=c(1,2))
+plot(cv.tax_rate$size,cv.tax_rate$dev, type="b")
+plot(cv.tax_rate$k, cv.tax_rate$dev, type="b")
+## The optimal number of terminal node is 6 and we display the pruned tree graphically
+par(mfrow=c(1,1))
+prune.tax_rate <-prune.misclass(tree.tax_rate, best=6)
+plot(prune.tax_rate)
+text(prune.tax_rate, pretty=0)
+
+## Compute the test error rate using the pruned tree 
+prune.tax_rate.pred<-predict(prune.tax_rate, test_CO2, type="class")
+table(prune.tax_rate.pred, tax.rate[-train])
+mean(prune.tax_rate.pred!=tax.rate[-train])
+#Misclassification error = 0.1557639   # same with before
+
+################
+#
+#  Bagging
+#
+################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+bagging.tax_rate<-bagging(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+        +OtherAxle+EngineSize+Power,data=train_CO2)
+bagging.pred<-predict(bagging.tax_rate,newdata = test_CO2)
+mean(bagging.pred!=classification.data$tax.rate[-train])
+# misclassification rate = 0.07053
+
+####################
+#
+# Random Forest
+#
+###################
+set.seed(1)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=classification.data[train,]
+test_CO2=classification.data[-train,]
+randomforest.tax_rate<-randomForest(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                                    +OtherAxle+EngineSize+Power,data = train_CO2,importance=T)
+randomforest.tax_rate.pred<-predict(randomforest.tax_rate,newdata = test_CO2)
+mean(randomforest.tax_rate.pred!=classification.data$tax.rate[-train])
+# misclassification rate = 0.0628
+
+###################
+#
+# Boosting tree
+#
+###################
+
+# This is the 2-class problem, so it should choose the distribution = "Bernoulli" 
+set.seed(1)
+boosting.data<-classification.data
+boosting.data$tax.rate<-ifelse(boosting.data$tax.rate=="Low",1,0)
+train<-sample(seq(14079),9386,replace = F)
+train_CO2=boosting.data[train,]
+test_CO2=boosting.data[-train,]
+
+# first tune the best parameters
+hyper_grid <- expand.grid(
+  shrinkage = c(.01, .1),
+  interaction.depth = c(1, 3, 5,8),
+  optimal_trees = 0,               
+  min_error_rate = 0               
+)
+nrow(hyper_grid)
+# We loop through each hyperparameter combination and apply 8000 trees. 
+# randomize data
+random_index <- sample(1:nrow(train_CO2), nrow(train_CO2))
+random_CO2_train <- train_CO2[random_index, ]
+
+for(i in 1:nrow(hyper_grid)) {
+  # train model
+  gbm.tune <- gbm(
+    formula=tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+    +OtherAxle+EngineSize+Power,
+    distribution = "bernoulli",
+    data = random_CO2_train,
+    n.trees = 8000,
+    interaction.depth = hyper_grid$interaction.depth[i],
+    shrinkage = hyper_grid$shrinkage[i],
+    train.fraction = .75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE)
+  hyper_grid$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+  hyper_grid$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+}
+hyper_grid %>%dplyr::arrange(min_RMSE) %>%head(10)
+# best parameter:shrinkage=0.1,interaction.depth=3,optimal trees=7192
+lasso.boost.model = gbm( CO2~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Mass
+                         +EngineSize+Power,data = train_CO2, distribution = "gaussian",
+                         n.trees =7192 , interaction.depth =3,shrinkage =0.1)
+
+
+
+gbm.model = gbm(tax.rate~MemberState+MfrHarmonised+ApprovalYr+Year+FuelType+Registrations+Mass+Wheelbase+SteeringAxle
+                +OtherAxle+EngineSize+Power, data=train_CO2, shrinkage=0.01, distribution = 'bernoulli', 
+                 n.trees=8000,train.fraction = 0.5, verbose=F)
+
+
+
+
+
+
