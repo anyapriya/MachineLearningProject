@@ -1,0 +1,256 @@
+---
+title: "Machine Learning Project"
+author: "Anya & Khushbakht"
+date: "6 December 2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+
+#### Introduction 
+
+Coordinate descent algorithm is a way of 'solving optimization problems by performing minimization along coordinate directions or coordinate hyperplanes'. It aims to minimize a function over a large set of variables by optimising a single dimension while keeping all the other dimensions fixed. Coordinate desceet has various applications particularly within machine learning because of its easy implementation and scalability. In this report we will be implementing coordinate descent algorithms to solve the Lasso and the Elastic Net problems.
+
+#### Lasso
+The Lasso (Least Absolute Shrinkage and Selection Operator) is a powerful method that performs two main tasks: variable selection and regularisation. It does this by applying a shrinking process where it penalizes the coefficients of the regression variables by shrinking some of them to zero. Hence, Lasso yeilds sparse models by using an l1 norm penalty which forces some of the coefficient estimates to be equal to zero when the tuning parameter, lamda, is large enough. This in turn helps minimise the prediction error of the model. We are now going to use the coordinate descent algorithm to solve the lasso problem. The method we are going to be implementing is as follows:
+
+1- Initialising the coefficients for all the variables to zero, ie, 
+   $\beta_j$ = 0, j = 1,...p
+   
+2- Repeating the following steps until convergence: 
+
+a. Computing the partial residuals,ie, $r_{ij}$ = $y_i$ - $\sum_{k=j}x_{ik}\beta_k$
+b. Computing the least square coefficients of these residuals,ie, $\beta_j^*=\frac{1}{n}\sum_{i=1}^nx_{ij}r_{ij}$
+c. Updating the coefficents by soft thresholding,ie, $\beta_j=sign(\beta_j^*)(|\beta_j^*|-\lambda)_+$
+
+
+```{r}
+coordDescAlg.Lasso <- function(lambda, y, x){
+  
+  x <- as.matrix(x)
+  converge <- FALSE  #initialising coverge as False
+  n <- dim(x)[1]     #number of observations for each variable is equal to the no. of rows
+  p <- dim(x)[2]     #total number of variables
+  BetaHat <- rep(0, p) #initialising BetaHat
+  BetaHat.star <- rep(0, p) #initialising BetaHat.Star
+  newBetaHat <- rep(0,p) #initialising newBetaHat
+  r <- matrix(rep(0,n*p), ncol = p) #creating the residual matrix 
+  
+  while(!converge){
+    for(j in 1:p){
+      r[,j] <- y - x[,-j]%*%BetaHat[-j] #computing partial residuals
+      
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j]) #computing least square coefficients of the residuals 
+      newBetaHat[j] <- sign(BetaHat.star[j])*pmax(BetaHat.star[j] - n*(lambda / (t(x[,j])%*% x[,j])), 0) #updating newBetaHat by soft thresholding 
+      
+      if(all(round(BetaHat, 5) == round(newBetaHat,5))){ #repeating loop until convergence
+        converge <- TRUE
+        break
+      } else {
+        BetaHat <- newBetaHat
+      }
+    }
+  }
+  return(BetaHat)
+}
+```
+
+RESULTS...
+
+The Lasso can be advantageous in many situtations because of its ability to shrink and remove redundant coefficients which help provide good accuracy. Moreover, the Lasso helps increase model interpretability as it eliminates irrelevant variables that are not associated with the response variable, thereby, reducing overfitting. It further improves on the Ridge Regression method, by using the l1 norm penalty to actually provide us a subset of variables from the model, that is, carry out successful variable selection. However, despite these advantages, there are certain situtations in which the Lasso does not perform well.
+
+Firstly, when faced with a very complex model, where the number of dimensions is greater than the number of observations, that is, p > n, the Lasso method ends up selecting at most n variables before it starts saturating. So, this might result in a model with quite a few unnecessary variables being used. Secondly, in situations where a group of variables has very high pairwise correlation between them, the Lasso tends to select only only variable from the group, which might result in poor selection as all the other variables in that group are ignored. Finally, even though the Lasso dominates Ridge Regression in the case of variable selection when n > p, but it falls behind in the prediction performance. 
+
+#### ELASTIC NET
+
+The Elastic Net can enable us to overcome these limitations of the Lasso, by combining 
+methods from both the Lasso and the Ridge Regression. It does this by adding a quadratic element to the penalty by using both the l1 and l2 norm penalties which removes the limitation on the selected variables number and also stabilizes the selection from grouped variables. Hence, like Lasso it provides sparse solutions but it also has the advantage of performing well with highly correlated variables. 
+
+We are now going to use the coordinate descent algorithm to solve the Elastic Net problem which follows a very similar method to solving the Lasso. However, for Elastic net, we need to minimize the following wrt $\beta_j$:
+
+$\frac{1}{2n}\sum_{i=1}^n(y_i-\sum_{j=1}x_{ij}\beta_j)^2 + \lambda_1\sum_{j=1}^p|\beta_j| + \lambda_2\sum_{j=1}^p\beta_j^2$
+
+which gives us 
+
+$\frac{1}{n}\sum_{i=1}^n(y_i - \sum_{i=1}^px_{ij}\beta_j)x_{ij} + \lambda_1 + 2\lambda_2\beta_j = 0$
+
+$\frac{1}{n}\sum_{i=1}^nr_{ij}x_{ij} + \lambda_1 + 2\lambda_2\beta_j = 0$
+
+$ \beta_j = \frac{1/n\sum_{i=1}^nr_{ij}x_{ij}}{2\lambda_2}$
+
+Updating $\beta_j$ by soft thresholding then gives us:
+
+$\beta_j=\frac{sign(\beta_j^*)(|\beta_j^*|-\lambda_1)_+}{1 + 2\lambda_2}$
+
+We then implemented this Algorithm in R with the following code:
+```{r}
+coordDescAlg.ElNet <- function(lambda, y, x){ 
+  #lamda has to dimensions 
+  x <- as.matrix(x)
+  converge <- FALSE #initialising coverge as False
+  n <- dim(x)[1]    #number of observations for each variable is equal to the no. of rows
+  p <- dim(x)[2]    #total number of variables
+  BetaHat <- rep(0, p)  #initialising BetaHat
+  BetaHat.star <- rep(0, p) #initialising BetaHat.Star
+  newBetaHat <- rep(0,p) #initialising newBetaHat
+  r <- matrix(rep(0,n*p), ncol = p) #creating the residual matrix 
+  
+  while(!converge){
+    for(j in 1:p){
+      r[,j] <- y - x[,-j]%*%BetaHat[-j] #computing partial residuals
+      
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j]) #computing least square coefficients of the residuals 
+      newBetaHat[j] <- (sign(BetaHat.star[j])*pmax(BetaHat.star[j] - (lambda[1] / (t(x[,j])%*% x[,j])), 0)) / ((1 + 2*lambda[2] ))  #updating newBetaHat by soft thresholding 
+      
+      if(all(round(BetaHat, 5) == round(newBetaHat,5))){ #repeating loop until convergence
+        converge <- TRUE
+        break
+      } else {
+        BetaHat <- newBetaHat
+      }
+    }
+  }
+  return(BetaHat)
+}
+```
+
+Standardisation part?
+
+
+#### Selecting the Regularisation parameters for Lasso and Elastic Net
+
+To implement the Lasso and the Elastic Net as efficient feature selection approaches requires a method to select the value for the tuning parameter $\lambda$ for Lasso and $\lambda_1$ and $\lambda_2$ for the Elastic Net problem). The way we have done this is by using the validation set approach for both the Lasso and the Elastic Net problem. Under this approach, we divided the dataset into a training and testing set and then used the training set to fit the model. We do not do a random selection because the dataset is already random. We then use the fitted model to predict the value of the  $\lambda$, which is then finally used to calculate the MSE for the given $\lambda$. After applying the validation set approach to both the Lasso(MSEValid.Lasso) and Elastic Net(MSEValid.Elasticnet) problems, we created a new function(Validation) to find the optimal value of the  $\lambda$. We used the optim() function to find the lamda with the minimum MSE by using the Brent method which focuses on minimising one-dimensional problems. This function thereby allows us to find the optimal values for our tuning paramaters for both the Lasso($\lambda$) and the Elastic Net($\lambda_1,\lambda_2$) problems and returns the values of the BetaHat and the MSE.
+
+
+```{r}
+#Called by the Validation function. It calculates the value of the MSE for a given 
+MSEValid.Lasso <- function(lambda, x, y, sizes){
+  testSize <- sizes[1] #size of the testing dataset
+  validSize <- sizes[2] #size of the validation dataset
+  ytrain = y[1:testSize] #selecting the training data 
+  xtrain = x[1:testSize,] 
+  yvalid = y[(testSize+1):(testSize + validSize)] #selecting the validation set
+  xvalid = x[(testSize+1):(testSize + validSize),] 
+  BetaHat <- coordDescAlg.Lasso(lambda, ytrain, xtrain) #predicting the value of lambda
+  MSE <- mean((yvalid - xvalid %*% BetaHat)^2) #calculating the MSE for given lamda
+  return(MSE)
+}
+
+#Called by Validation, calculates the value of MSE for a given lambda
+MSEValid.ElasticNet <- function(lambda, x, y, sizes){
+  testSize <- sizes[1] #size of testing dataset
+  validSize <- sizes[2] #size of the validation dataset
+  ytrain = y[1:testSize] #selecting the training data 
+  xtrain = x[1:testSize,]
+  yvalid = y[(testSize+1):(testSize + validSize)] #selecting the validation set
+  xvalid = x[(testSize+1):(testSize + validSize),]
+  BetaHat <- coordDescAlg.ElNet(lambda, ytrain, xtrain) #predicting the value of lambda
+  MSE <- mean((yvalid - xvalid %*% BetaHat)^2) #calculating the MSE for given lamda
+  return(MSE)
+}
+
+Validation <- function(x,y,sizes){
+  testSize <- sizes[1]
+  
+  MinMSE.Lasso <- optim(c(0.0001), MSEValid.Lasso,  x = x, y = y, sizes = sizes, method = "Brent", lower = 0, upper = 5) #minimize the MSE to find lamda with lowest MSE for Lasso
+  BetaHat.Lasso <- coordDescAlg.Lasso(MinMSE.Lasso$par, y[1:testSize], x[1:testSize,])
+  
+  MinMSE.ElasticNet <- optim(c(0.0001, 0.0001), MSEValid.ElasticNet,  x = x, y = y, sizes = sizes) #minimize the MSE to find lamda with lowest MSE for Elastic Net
+  BetaHat.ElasticNet <- coordDescAlg.ElNet(MinMSE.ElasticNet$par, y[1:testSize], x[1:testSize,])
+  
+  return(list(BetaHat.Lasso,MinMSE.Lasso$value, BetaHat.ElasticNet, MinMSE.ElasticNet$value))
+}
+
+```
+
+#### Simulation
+
+The Elastic net dominates the Lasso not only in prediction accuracy but also performs well in variable selection as it aims to overcome the limitations of the Lasso. Therfore, in order to show this in action, we aimed to carry out several different simulations.
+
+In order to carry out the simulation process, we created the function 'Testing' which enables us to run one round of simulation. This function incorporates two other functions,'covMatrix' and 'mySample'. The 'covMatrix' function is used calculate the variance-covariance matrix which is then called by 'mySample' to generate a random dataset. By calling onto these two functions, 'Testing' runs one simulation and returns the number of non-zero coefficients and the MSE values from the optimal $\lambda$. Finally we generated the 'Simulation' function which would enable us to run multiple simulations at one time and return the values of the coefficients with their respective MSE. 
+
+Our baseline Simulation is the one we are required to do as part of the project, that is, to simulate 50 datasets consisting on 8 predictors with 200 testing observations and 20 validation and training observations where $\beta$ = (3, 1.5, 0, 0, 2, 0, 0, 0)^{T} and $\sigma$ = 3. The pairwise correlation between $x_i$ and $x_j$ was set to be corr(i, j) = $0.5^{|i???j|}$.
+
+```{r}
+Simulation <- function(times, obs, test.valid.size, p, rho, errorSD, betaVals){
+  Output <- NULL
+  for(i in 1:times){
+    Output <-rbind(Output, Testing(n = obs, sizes = test.valid.size, p = p, rho = rho, errorSD = errorSD, betaVals = betaVals))
+  }
+  return(Output)
+}
+
+#Called by Simulation, runs one round of the simulation, returns the number of non-zero coefficients and MSE from optimal lambda that minimizes MSE
+Testing <- function(n, sizes, p, rho, errorSD, betaVals){
+  SampleOut <- mySample(n, p, rho, errorSD, betaVals)
+  x <- SampleOut[[1]]
+  y <- SampleOut[[2]]
+  Output <- Validation(x = x, y = y, sizes = sizes)
+  NumbNonZeros.Lasso <- sum(Output[[1]] != 0) #non-zero coefficients from the Lasso 
+  NumbNonZeros.ElNet <- sum(Output[[3]] != 0) #non-zero coefficients from Elastic Net
+  MSE.Lasso <- Output[[2]]
+  MSE.ElNet <- Output[[4]]
+  return(c(NumbNonZeros.Lasso, MSE.Lasso, NumbNonZeros.ElNet, MSE.ElNet))
+}
+
+        #Called by Testing, randomly generates the data set
+        mySample <- function(n, p, rho, errorSD, betaVals){
+          SigmaMat <- covMatrix(rho, p)
+          mu <- rep(0,p)
+          x <- mvrnorm(n = n, mu = mu, Sigma = SigmaMat)
+          error <- rnorm(n)
+          y <- x %*% betaVals + errorSD*error
+          return(list(x,y))
+        }
+        
+                  #Called by mySample, creates variance-covariance matrix
+                  covMatrix <- function(rho, p){
+                    covMatrix <- matrix(rep(0,(p^2)), ncol = p)
+                    for(i in 1:p){
+                      for(j in 1:p){
+                        covMatrix[i,j] <- rho^abs(i-j)
+                      }
+                    }
+                    return(covMatrix)
+                  }
+
+```
+
+###### a. Changing the number of simulations
+ - plots + results explained 
+
+###### b. Changing the number of observations 
+
+###### c. Changing the size of the training dataset
+
+
+###### d. Changing the size of the validation dataset
+
+
+###### e. Changing the number of predictors
+
+
+###### f. Changing sparsity levels of beta
+
+
+###### g. Changing sigma
+
+
+
+#### Conclusion
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
