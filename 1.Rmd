@@ -1,21 +1,28 @@
+
+\centering
 ---
-title: "Machine Learning Project"
-author: "Anya & Khushbakht"
-date: "6 December 2018"
+title: \vspace{3in}"Machine Learning Project"
+author: "Xiaoyan Lu, Anya Conti, Khushbakht Irfanullah, Xueyan Hou'
+date: "12 December 2018"
 output:
-  pdf_document: default
-  html_document:
-    df_print: paged
+  pdf_document: 
+    number_sections: true
 ---
+\tableofcontents
 
 
+\newpage
 
 #### Introduction 
 
 Coordinate descent algorithm is a way of 'solving optimization problems by performing minimization along coordinate directions or coordinate hyperplanes'. It aims to minimize a function over a large set of variables by optimising a single dimension while keeping all the other dimensions fixed. Coordinate desceet has various applications particularly within machine learning because of its easy implementation and scalability. In this report we will be implementing coordinate descent algorithms to solve the Lasso and the Elastic Net problems.
 
 #### Lasso
-The Lasso (Least Absolute Shrinkage and Selection Operator) is a powerful method that performs two main tasks: variable selection and regularisation. It does this by applying a shrinking process where it penalizes the coefficients of the regression variables by shrinking some of them to zero. Hence, Lasso yields sparse models by using an l1 norm penalty which forces some of the coefficient estimates to be equal to zero when the tuning parameter, $\lambda$, is large enough. This in turn helps minimise the prediction error of the model. We are now going to use the coordinate descent algorithm to solve the lasso problem. The method we are going to be implementing is as follows:
+The Lasso (Least Absolute Shrinkage and Selection Operator) is a powerful method that performs two main tasks: variable selection and regularisation. It does this by applying a shrinking process where it penalizes the coefficients of the regression variables by shrinking some of them to zero. Hence, Lasso yields sparse models by using an l1 norm penalty which forces some of the coefficient estimates to be equal to zero when the tuning parameter, $\lambda$, is large enough. This in turn helps minimise the prediction error of the model. We are now going to use the coordinate descent algorithm to solve the lasso problem, wich requires for us to minimize the following wrt $\beta_j$:
+
+$$\frac{1}{2n}\sum_{i=1}^n(y_i-\sum_{j=1}x_{ij}\beta_j)^2 + \lambda\sum_{j=1}^p|\beta_j|$$
+
+The method we are going to be implementing is as follows:
 
 1- Initialising the coefficients for all the variables to zero, ie, 
    $\beta_j$ = 0, j = 1,...p
@@ -26,14 +33,14 @@ a. Computing the partial residuals,ie, $r_{ij}$ = $y_i$ - $\sum_{k=j}x_{ik}\beta
 b. Computing the least square coefficients of these residuals,ie, $\beta_j^*=\frac{1}{n}\sum_{i=1}^nx_{ij}r_{ij}$
 c. Updating the coefficents by soft thresholding,ie, $\beta_j=sign(\beta_j^*)(|\beta_j^*|-\lambda)_+$
 
-
+We implemented the Lasso using the following method:
 ```{r}
 coordDescAlg.Lasso <- function(lambda, y, x){
   
   x <- as.matrix(x)
   converge <- FALSE  #initialising coverge as False
   n <- dim(x)[1]     #number of observations for each variable is equal to the no. of rows
-  p <- dim(x)[2]     #total number of variables is equal to the number of columns
+  p <- dim(x)[2]     #number of variables is equal to the number of columns
   BetaHat <- rep(0, p) #initialising BetaHat
   BetaHat.star <- rep(0, p) #initialising BetaHat.Star
   newBetaHat <- rep(0,p) #initialising newBetaHat
@@ -70,7 +77,7 @@ The Elastic Net can enable us to overcome these limitations of the Lasso, by com
 
 We are now going to use the coordinate descent algorithm to solve the Elastic Net problem which follows a very similar method to solving the Lasso. However, for Elastic net, we need to minimize the following wrt $\beta_j$:
 
-$\frac{1}{2n}\sum_{i=1}^n(y_i-\sum_{j=1}x_{ij}\beta_j)^2 + \lambda_1\sum_{j=1}^p|\beta_j| + \lambda_2\sum_{j=1}^p\beta_j^2$
+$$\frac{1}{2n}\sum_{i=1}^n(y_i-\sum_{j=1}x_{ij}\beta_j)^2 + \lambda_1\sum_{j=1}^p|\beta_j| + \lambda_2\sum_{j=1}^p\beta_j^2$$
 
 which gives us 
 
@@ -84,10 +91,10 @@ Updating $\beta_j$ by soft thresholding then gives us:
 
 $\beta_j=\frac{sign(\beta_j^*)(|\beta_j^*|-\lambda_1)_+}{1 + 2\lambda_2}$
 
-We then implemented this Algorithm in R with the following code:
+We then implemented this Elastic Net Algorithm in R with the following code:
 ```{r}
 coordDescAlg.ElNet <- function(lambda, y, x){ 
-  #lamda has to dimensions 
+  #lamda has two dimensions 
   x <- as.matrix(x)
   converge <- FALSE #initialising coverge as False
   n <- dim(x)[1]    #number of observations for each variable is equal to the no. of rows
@@ -205,7 +212,7 @@ Testing <- function(n, sizes, p, rho, errorSD, betaVals){
           return(list(x,y))
         }
         
-  #Called by mySample, creates variance-covariance matrix to measure pairwise correlation
+          #Called by mySample, creates variance-covariance matrix to measure pairwise correlation
           covMatrix <- function(rho, p){
             covMatrix <- matrix(rep(0,(p^2)), ncol = p)#initializing covMatrix
             for(i in 1:p){
@@ -219,6 +226,9 @@ Testing <- function(n, sizes, p, rho, errorSD, betaVals){
 ```
 #Baseline Results
 Our baseline results show how the Elastic Net outperforms Lasso in the variable selection process as we got a lower mean-squared error for our simulations when implementing the Elastic Net(...) as compared to the Lasso(...). This might be because of the Elastic net's grouped selection property which groups the variables that are highly correlated and then deals with them togther, whether it's remvoing or keeping them.
+
+#### Mean of the MSE and number of non-zero coefficients 
+
 
 
 ##### a. Changing the number of simulations
@@ -247,15 +257,166 @@ When we chage the number of observations such that
 
 #### Conclusion
 
+\newpage
 
-###References
+####References
+
+* https://web.stanford.edu/~hastie/Papers/B67.2%20(2005)%20301-320%20Zou%20&%20Hastie.pdf
+* https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2929880/#R5
+* ISLR Chapter 6
+
+\newpage
+
+####Appendix
+
+```{r}
+#Called by the Validation function. It calculates the value of the MSE for a given 
+coordDescAlg.Lasso <- function(lambda, y, x){
+  
+  x <- as.matrix(x)
+  converge <- FALSE  #initialising coverge as False
+  n <- dim(x)[1]     #number of observations for each variable is equal to the no. of rows
+  p <- dim(x)[2]     #number of variables is equal to the number of columns
+  BetaHat <- rep(0, p) #initialising BetaHat
+  BetaHat.star <- rep(0, p) #initialising BetaHat.Star
+  newBetaHat <- rep(0,p) #initialising newBetaHat
+  r <- matrix(rep(0,n*p), ncol = p) #creating the residual matrix 
+  
+  while(!converge){
+    for(j in 1:p){
+      r[,j] <- y - x[,-j]%*%BetaHat[-j] #computing partial residuals
+      
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j]) #computing least square coefficients of the residuals 
+      newBetaHat[j] <- sign(BetaHat.star[j])*pmax(abs(BetaHat.star[j]) - n*(lambda / (t(x[,j])%*% x[,j])), 0) #updating newBetaHat by soft thresholding 
+      
+      if(all(round(BetaHat, 5) == round(newBetaHat,5))){ #repeating loop until convergence
+        converge <- TRUE
+        break
+      } else {
+        BetaHat <- newBetaHat
+      }
+    }
+  }
+  return(BetaHat)
+}
+
+coordDescAlg.ElNet <- function(lambda, y, x){ 
+  #lamda has two dimensions 
+  x <- as.matrix(x)
+  converge <- FALSE #initialising coverge as False
+  n <- dim(x)[1]    #number of observations for each variable is equal to the no. of rows
+  p <- dim(x)[2]    #total number of variables
+  BetaHat <- rep(0, p)  #initialising BetaHat
+  BetaHat.star <- rep(0, p) #initialising BetaHat.Star
+  newBetaHat <- rep(0,p) #initialising newBetaHat
+  r <- matrix(rep(0,n*p), ncol = p) #creating the residual matrix 
+  
+  while(!converge){
+    for(j in 1:p){
+      r[,j] <- y - x[,-j]%*%BetaHat[-j] #computing partial residuals
+      
+      BetaHat.star[j] <- (t(x[,j])%*% r[,j]) / (t(x[,j])%*% x[,j]) #computing least square coefficients of the residuals 
+      newBetaHat[j] <- (sign(BetaHat.star[j])*pmax(abs(BetaHat.star[j]) - ((n*lambda[1] / (t(x[,j])%*% x[,j]))/(1+2*lambda[2])),0)) #updating newBetaHat by soft thresholding 
+      
+      if(all(round(BetaHat, 5) == round(newBetaHat,5))){ #repeating loop until convergence
+        converge <- TRUE
+        break
+      } else {
+        BetaHat <- newBetaHat
+      }
+    }
+  }
+  return(BetaHat)
+}
+
+Simulation <- function(times, obs, test.valid.size, p, rho, errorSD, betaVals){
+  Output <- NULL
+  for(i in 1:times){
+    Output <-rbind(Output, Testing(n = obs, sizes = test.valid.size, p = p, rho = rho, errorSD = errorSD, betaVals = betaVals))
+  }
+  return(Output)
+}
+
+#Called by Simulation, runs one round of the simulation, returns the number of non-zero coefficients and MSE from optimal lambda that minimizes MSE
+Testing <- function(n, sizes, p, rho, errorSD, betaVals){
+  SampleOut <- mySample(n, p, rho, errorSD, betaVals)
+  x <- SampleOut[[1]]
+  y <- SampleOut[[2]]
+  Output <- Validation(x = x, y = y, sizes = sizes)
+  NumbNonZeros.Lasso <- sum(Output[[1]] != 0) #non-zero coefficients from the Lasso 
+  NumbNonZeros.ElNet <- sum(Output[[3]] != 0) #non-zero coefficients from Elastic Net
+  MSE.Lasso <- Output[[2]]
+  MSE.ElNet <- Output[[4]]
+  return(c(NumbNonZeros.Lasso, MSE.Lasso, NumbNonZeros.ElNet, MSE.ElNet))
+}
+
+        #Called by Testing, randomly generates the data set
+        mySample <- function(n, p, rho, errorSD, betaVals){
+          SigmaMat <- covMatrix(rho, p)
+          mu <- rep(0,p)
+          x <- mvrnorm(n = n, mu = mu, Sigma = SigmaMat)
+          error <- rnorm(n) 
+          y <- x %*% betaVals + errorSD*error 
+          return(list(x,y))
+        }
+        
+  #Called by mySample, creates variance-covariance matrix to measure pairwise correlation
+          covMatrix <- function(rho, p){
+            covMatrix <- matrix(rep(0,(p^2)), ncol = p)#initializing covMatrix
+            for(i in 1:p){
+                for(j in 1:p){
+                    covMatrix[i,j] <- rho^abs(i-j) 
+                }
+              }
+             return(covMatrix)
+          }
+          
+Validation <- function(x,y,sizes){
+  testSize <- sizes[1]
+  
+  MinMSE.Lasso <- optim(c(0.0001), MSEValid.Lasso,  x = x, y = y, sizes = sizes, method = "Brent", lower = 0, upper = 5) #minimize the MSE to find lamda with lowest MSE for Lasso
+  BetaHat.Lasso <- coordDescAlg.Lasso(MinMSE.Lasso$par, y[1:testSize], x[1:testSize,])
+  
+   MinMSE.ElasticNet <- optim(c(0.0001, 0.0001), MSEValid.ElasticNet,  x = x, y = y, sizes = sizes,method = 'L-BFGS-B',lower=c(0,0),upper = c(4,1)) #minimize the MSE to find lamda with lowest MSE for Elastic Net
+  BetaHat.ElasticNet <- coordDescAlg.ElNet(MinMSE.ElasticNet$par, y[1:testSize], x[1:testSize,])
+  
+  return(list(BetaHat.Lasso,MinMSE.Lasso$value, BetaHat.ElasticNet, MinMSE.ElasticNet$value))
+}
+
+MSEValid.Lasso <- function(lambda, x, y, sizes){
+  testSize <- sizes[1] #size of the testing dataset
+  validSize <- sizes[2] #size of the validation dataset
+  ytrain = y[1:testSize] #selecting the training data 
+  xtrain = x[1:testSize,] 
+  yvalid = y[(testSize+1):(testSize + validSize)] #selecting the validation set
+  xvalid = x[(testSize+1):(testSize + validSize),] 
+  BetaHat <- coordDescAlg.Lasso(lambda, ytrain, xtrain) #predicting the value of lambda
+  MSE <- mean((yvalid - xvalid %*% BetaHat)^2) #calculating the MSE for given lamda
+  return(MSE)
+}
+
+#Called by Validation, calculates the value of MSE for a given lambda
+MSEValid.ElasticNet <- function(lambda, x, y, sizes){
+  testSize <- sizes[1] #size of testing dataset
+  validSize <- sizes[2] #size of the validation dataset
+  ytrain = y[1:testSize] #selecting the training data 
+  xtrain = x[1:testSize,]
+  yvalid = y[(testSize+1):(testSize + validSize)] #selecting the validation set
+  xvalid = x[(testSize+1):(testSize + validSize),]
+  BetaHat <- coordDescAlg.ElNet(lambda, ytrain, xtrain) #predicting the value of lambda
+  MSE <- mean((yvalid - xvalid %*% BetaHat)^2) #calculating the MSE for given lamda
+  return(MSE)
+}
+
+
+```
 
 ## Including Plots
 
-You can also embed plots, for example:
+#You can also embed plots, for example:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
+#```{r pressure, echo=FALSE}
+#plot(pressure)
+#```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+#Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
